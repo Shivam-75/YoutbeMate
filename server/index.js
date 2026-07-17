@@ -81,7 +81,7 @@ app.get("/api/diagnostics", (req, res) => {
     for (const p of paths) {
       if (fs.existsSync(p) || p === "yt-dlp") {
         try {
-          const out = execSync(`"${p}" --version`, { timeout: 3000 }).toString().trim();
+          const out = execSync(`"${p}" --version`, { timeout: 10000 }).toString().trim();
           result.ytdlpPath = p;
           result.ytdlpRun = out;
           break;
@@ -103,7 +103,7 @@ app.get("/api/diagnostics", (req, res) => {
     for (const p of paths) {
       if (p) {
         try {
-          const out = execSync(`"${p}" -version`, { timeout: 3000 }).toString().split("\n")[0].trim();
+          const out = execSync(`"${p}" -version`, { timeout: 10000 }).toString().split("\n")[0].trim();
           result.ffmpegPath = p;
           result.ffmpegRun = out;
           break;

@@ -93,9 +93,14 @@ function findExecutable(name) {
 
   // 4. Test candidates and return the first working path
   for (const cmd of candidates) {
+    // Trust absolute paths if they exist to avoid PyInstaller startup timeout on slow VMs
+    if (path.isAbsolute(cmd) && fs.existsSync(cmd)) {
+      console.log(`✅ ${name} detected successfully (trusted absolute path):`, cmd);
+      return cmd;
+    }
     try {
       const versionArg = name === "ffmpeg" ? "-version" : "--version";
-      execSync(`"${cmd}" ${versionArg}`, { stdio: "ignore", timeout: 3000 });
+      execSync(`"${cmd}" ${versionArg}`, { stdio: "ignore", timeout: 8000 });
       console.log(`✅ ${name} detected successfully at:`, cmd);
       return cmd;
     } catch (_) {}
