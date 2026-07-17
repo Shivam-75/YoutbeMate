@@ -439,19 +439,30 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
   }
 
   let useFallback = false;
-  if (path.isAbsolute(YTDLP_CMD)) {
+  if (YTDLP_CMD && path.isAbsolute(YTDLP_CMD)) {
+    // Absolute path — just check the file exists (already validated in findExecutable)
     if (!fs.existsSync(YTDLP_CMD)) {
-      console.log(`[downloadVideo] yt-dlp binary at ${YTDLP_CMD} does not exist. Forcing fallback...`);
+      console.log(`[downloadVideo] yt-dlp binary missing at ${YTDLP_CMD}. Forcing fallback...`);
       useFallback = true;
+    } else {
+      console.log(`[downloadVideo] Using yt-dlp at ${YTDLP_CMD}`);
     }
   } else {
+    // Bare command — try to run it
+    const isWin = process.platform === "win32";
     try {
-      execSync(`"${YTDLP_CMD}" --version`, { stdio: "ignore", timeout: 3000 });
+      if (isWin) {
+        execSync(`"${YTDLP_CMD}" --version`, { stdio: "ignore", timeout: 3000 });
+      } else {
+        execSync(`${YTDLP_CMD} --version`, { stdio: "ignore", timeout: 3000 });
+      }
+      console.log(`[downloadVideo] yt-dlp available as ${YTDLP_CMD}`);
     } catch (_) {
       console.log("[downloadVideo] Global yt-dlp not found or not executable. Forcing fallback...");
       useFallback = true;
     }
   }
+
 
   const mockProc = {
     kill: () => {
