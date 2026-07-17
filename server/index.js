@@ -9,6 +9,20 @@ import videoRoutes from "./src/routes/videoRoutes.js";
 
 config();
 
+// ── Startup Diagnostics ──────────────────────────────────────────────────────
+import { execSync } from "child_process";
+try {
+  const ytdlpPath = execSync("which yt-dlp || echo NOT_FOUND", { stdio: ["ignore","pipe","ignore"] }).toString().trim();
+  console.log(`[STARTUP] yt-dlp path: ${ytdlpPath}`);
+} catch (_) {
+  console.log("[STARTUP] which yt-dlp failed");
+}
+try {
+  const pythonPath = execSync("which python3 || which python || echo NOT_FOUND", { stdio: ["ignore","pipe","ignore"] }).toString().trim();
+  console.log(`[STARTUP] python path: ${pythonPath}`);
+} catch (_) {}
+
+
 const PORT = process.env.PORT || 5000;
 
 const app = express();
