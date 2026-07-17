@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import ffmpegPath from "ffmpeg-static";
+import axios from "axios";
 
 const execAsync = promisify(exec);
 
@@ -179,6 +180,88 @@ export const getVideoInfo = async (url) => {
   };
 };
 
+// ─── Cobalt API Fallback Helpers ───────────────────────────────────────────────
+async function getCobaltDownloadUrl(videoUrl, resolution) {
+  const payload = {
+    url: videoUrl,
+    vQuality: resolution || "720",
+    filenamePattern: "classic"
+  };
+
+  const endpoints = [
+    "https://api.cobalt.tools/api/json",
+    "https://co.wuk.sh/api/json"
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.post(endpoint, payload, {
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        timeout: 15000
+      });
+
+      if (response.data && response.data.url) {
+        return response.data.url;
+      }
+    } catch (err) {
+      console.warn(`[Cobalt] endpoint ${endpoint} failed:`, err.message);
+    }
+  }
+
+  throw new Error("All fallback extraction APIs failed to parse the video link.");
+}
+
+async function downloadFromUrl(streamUrl, destPath, onProgress, onComplete, onError, mockProc) {
+  const controller = new AbortController();
+  mockProc.abortController = controller;
+
+  try {
+    const response = await axios({
+      method: "get",
+      url: streamUrl,
+      responseType: "stream",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      }
+    });
+
+    const totalBytes = parseInt(response.headers["content-length"], 10) || 0;
+    let downloadedBytes = 0;
+    const file = fs.createWriteStream(destPath);
+    
+    response.data.pipe(file);
+
+    response.data.on("data", (chunk) => {
+      downloadedBytes += chunk.length;
+      if (totalBytes > 0) {
+        const percent = (downloadedBytes / totalBytes) * 100;
+        onProgress?.(parseFloat(percent.toFixed(1)));
+      }
+    });
+
+    file.on("finish", () => {
+      file.close();
+      const fileSize = fs.existsSync(destPath) ? fs.statSync(destPath).size : 0;
+      onComplete?.({ filePath: destPath, fileSize });
+    });
+
+    file.on("error", (err) => {
+      file.close();
+      fs.unlink(destPath, () => {});
+      onError?.(err);
+    });
+
+  } catch (err) {
+    fs.unlink(destPath, () => {});
+    onError?.(err);
+  }
+}
+
 /**
  * Download video — returns the spawn process to support pausing/resuming
  */
@@ -265,7 +348,19 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
     console.error("[yt-dlp]", text);
   });
 
-  proc.on("close", (code) => {
+  let abortController = null;
+  const mockProc = {
+    kill: () => {
+      if (proc && typeof proc.kill === "function") {
+        try { proc.kill("SIGINT"); } catch (_) {}
+      }
+      if (mockProc.abortController) {
+        try { mockProc.abortController.abort(); } catch (_) {}
+      }
+    }
+  };
+
+  proc.on("close", async (code) => {
     if (code === 0) {
       const mp4 = filePath.endsWith(".mp4") ? filePath : filePath + ".mp4";
       const final = fs.existsSync(mp4) ? mp4 : filePath;
@@ -273,11 +368,23 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
       onComplete?.({ filePath: final, fileSize });
     } else {
       const cleanErr = stderrBuffer.trim().split("\n").pop() || "";
-      onError?.(new Error(`yt-dlp exited with code ${code}: ${cleanErr}`));
+      console.log(`[downloadVideo] yt-dlp failed (code ${code}: ${cleanErr}). Starting Cobalt API fallback...`);
+      
+      try {
+        const cobaltUrl = await getCobaltDownloadUrl(url, resolution);
+        console.log(`[downloadVideo] Cobalt extraction success, downloading from: ${cobaltUrl}`);
+        
+        await downloadFromUrl(cobaltUrl, outputPath, onProgress, onComplete, (fallbackErr) => {
+          onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback download failed: ${fallbackErr.message}`));
+        }, mockProc);
+      } catch (err) {
+        console.error(`[downloadVideo] Cobalt fallback failed:`, err.message);
+        onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback failed: ${err.message}`));
+      }
     }
   });
 
   proc.on("error", (e) => onError?.(new Error(`Cannot start yt-dlp: ${e.message}`)));
 
-  return proc;
+  return mockProc;
 };
