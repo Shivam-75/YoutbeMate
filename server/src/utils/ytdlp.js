@@ -215,6 +215,59 @@ async function getCobaltDownloadUrl(videoUrl, resolution) {
   throw new Error("All fallback extraction APIs failed to parse the video link.");
 }
 
+async function getInvidiousDownloadUrl(videoUrl, resolution) {
+  // Extract video ID from URL
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const match = videoUrl.match(regExp);
+  const videoId = (match && match[2].length === 11) ? match[2] : null;
+  if (!videoId) {
+    throw new Error("Could not extract YouTube video ID from URL");
+  }
+
+  // List of public and stable Invidious instances to query
+  const instances = [
+    "https://yewtu.be",
+    "https://invidious.nerd.gmbh",
+    "https://invidious.privacydev.net",
+    "https://invidious.projectsegfau.lt",
+    "https://invidious.de"
+  ];
+
+  for (const instance of instances) {
+    try {
+      console.log(`[Invidious] Querying ${instance} for video ${videoId}...`);
+      const response = await axios.get(`${instance}/api/v1/videos/${videoId}?local=true`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        timeout: 10000
+      });
+
+      const info = response.data;
+      if (info && info.formatStreams && info.formatStreams.length > 0) {
+        const targetLabel = `${resolution}p`;
+        let matchStream = info.formatStreams.find(s => s.qualityLabel === targetLabel);
+        if (!matchStream) {
+          // Fallback to any mp4 format
+          matchStream = info.formatStreams.find(s => s.type.includes("mp4")) || info.formatStreams[0];
+        }
+
+        if (matchStream && matchStream.url) {
+          let finalUrl = matchStream.url;
+          if (finalUrl.startsWith("/")) {
+            finalUrl = `${instance}${finalUrl}`;
+          }
+          return finalUrl;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Invidious] Instance ${instance} failed:`, err.message);
+    }
+  }
+
+  throw new Error("All Invidious instances failed to extract direct video stream.");
+}
+
 async function downloadFromUrl(streamUrl, destPath, onProgress, onComplete, onError, mockProc) {
   const controller = new AbortController();
   mockProc.abortController = controller;
@@ -368,18 +421,31 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
       onComplete?.({ filePath: final, fileSize });
     } else {
       const cleanErr = stderrBuffer.trim().split("\n").pop() || "";
-      console.log(`[downloadVideo] yt-dlp failed (code ${code}: ${cleanErr}). Starting Cobalt API fallback...`);
+      console.log(`[downloadVideo] yt-dlp failed (code ${code}: ${cleanErr}). Trying Cobalt API fallback...`);
       
       try {
         const cobaltUrl = await getCobaltDownloadUrl(url, resolution);
         console.log(`[downloadVideo] Cobalt extraction success, downloading from: ${cobaltUrl}`);
         
-        await downloadFromUrl(cobaltUrl, outputPath, onProgress, onComplete, (fallbackErr) => {
-          onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback download failed: ${fallbackErr.message}`));
+        await downloadFromUrl(cobaltUrl, outputPath, onProgress, onComplete, async (fallbackErr) => {
+          console.warn(`[downloadVideo] Cobalt download failed: ${fallbackErr.message}. Trying Invidious fallback...`);
+          await tryInvidiousFallback();
         }, mockProc);
       } catch (err) {
-        console.error(`[downloadVideo] Cobalt fallback failed:`, err.message);
-        onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback failed: ${err.message}`));
+        console.warn(`[downloadVideo] Cobalt extraction failed: ${err.message}. Trying Invidious fallback...`);
+        await tryInvidiousFallback();
+      }
+
+      async function tryInvidiousFallback() {
+        try {
+          const invidiousUrl = await getInvidiousDownloadUrl(url, resolution);
+          console.log(`[downloadVideo] Invidious extraction success, downloading from: ${invidiousUrl}`);
+          await downloadFromUrl(invidiousUrl, outputPath, onProgress, onComplete, (invErr) => {
+            onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback also failed: ${invErr.message}`));
+          }, mockProc);
+        } catch (invErr) {
+          onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback also failed: ${invErr.message}`));
+        }
       }
     }
   });
