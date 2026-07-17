@@ -2,6 +2,7 @@ import { exec, execSync, spawn } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
+import ffmpegPath from "ffmpeg-static";
 
 const execAsync = promisify(exec);
 
@@ -20,9 +21,23 @@ function findExecutable(name) {
   } catch (_) {}
 
   // 2. List of standard candidates
-  const candidates = [
+  const candidates = [];
+  
+  // Prioritize imported static path for ffmpeg
+  if (name === "ffmpeg" && ffmpegPath) {
+    candidates.push(ffmpegPath);
+  }
+
+  // Prioritize local project bin folder (where postinstall downloads yt-dlp)
+  candidates.push(
+    path.join(process.cwd(), "bin", name),
+    path.join(process.cwd(), "bin", `${name}.exe`),
     name,
-    `${name}.exe`,
+    `${name}.exe`
+  );
+
+  // standard candidates fallback
+  candidates.push(
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "Scripts", `${name}.exe`),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "Scripts", `${name}.exe`),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "Scripts", `${name}.exe`),
@@ -31,7 +46,7 @@ function findExecutable(name) {
     `C:\\Python310\\Scripts\\${name}.exe`,
     path.join(os_homedir(), "AppData", "Local", "Microsoft", "WindowsApps", `${name}.exe`),
     path.join(os_homedir(), "AppData", "Roaming", "Python", "Python312", "Scripts", `${name}.exe`),
-  ];
+  );
 
   // 3. Dynamic Winget package folder scanner
   const wingetBase = path.join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Packages");
