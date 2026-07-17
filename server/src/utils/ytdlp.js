@@ -250,7 +250,12 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
     if (mergeMatch) filePath = mergeMatch[1].trim();
   });
 
-  proc.stderr.on("data", (d) => console.error("[yt-dlp]", d.toString()));
+  let stderrBuffer = "";
+  proc.stderr.on("data", (d) => {
+    const text = d.toString();
+    stderrBuffer += text;
+    console.error("[yt-dlp]", text);
+  });
 
   proc.on("close", (code) => {
     if (code === 0) {
@@ -259,7 +264,8 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
       const fileSize = fs.existsSync(final) ? fs.statSync(final).size : 0;
       onComplete?.({ filePath: final, fileSize });
     } else {
-      onError?.(new Error(`yt-dlp exited with code ${code}`));
+      const cleanErr = stderrBuffer.trim().split("\n").pop() || "";
+      onError?.(new Error(`yt-dlp exited with code ${code}: ${cleanErr}`));
     }
   });
 
