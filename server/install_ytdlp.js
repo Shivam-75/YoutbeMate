@@ -5,7 +5,12 @@ import https from "https";
 // Helper to download a file with redirect support
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
-    https.get(url, (response) => {
+    const options = {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      }
+    };
+    https.get(url, options, (response) => {
       // Handle HTTP redirects (3xx)
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         downloadFile(response.headers.location, dest).then(resolve).catch(reject);
@@ -39,8 +44,9 @@ async function install() {
   }
 
   const isWindows = process.platform === "win32";
-  const filename = isWindows ? "yt-dlp.exe" : "yt-dlp";
-  const destPath = path.join(binDir, filename);
+  const downloadFilename = isWindows ? "yt-dlp.exe" : "yt-dlp_linux";
+  const localFilename = isWindows ? "yt-dlp.exe" : "yt-dlp";
+  const destPath = path.join(binDir, localFilename);
 
   // If binary already exists, skip download
   if (fs.existsSync(destPath)) {
@@ -48,7 +54,7 @@ async function install() {
     return;
   }
 
-  const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${filename}`;
+  const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${downloadFilename}`;
   console.log(`⏳ Downloading yt-dlp binary from: ${url}`);
   try {
     await downloadFile(url, destPath);
