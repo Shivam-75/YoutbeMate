@@ -224,18 +224,42 @@ async function getInvidiousDownloadUrl(videoUrl, resolution) {
     throw new Error("Could not extract YouTube video ID from URL");
   }
 
-  // List of public and stable Invidious instances to query
-  const instances = [
-    "https://yewtu.be",
-    "https://invidious.nerd.gmbh",
-    "https://invidious.privacydev.net",
-    "https://invidious.projectsegfau.lt",
-    "https://invidious.de"
-  ];
+  // Fetch healthy instances dynamically from official directory
+  let instances = [];
+  try {
+    console.log("[Invidious] Fetching active instances from invidious.io...");
+    const res = await axios.get("https://api.invidious.io/instances.json", { timeout: 10000 });
+    const data = res.data;
+    
+    const active = [];
+    if (Array.isArray(data)) {
+      for (const entry of data) {
+        const info = entry[1];
+        if (info && info.type === "https" && info.monitor && info.monitor.down === false && info.monitor.enabled === true) {
+          active.push({
+            uri: info.uri,
+            uptime: info.monitor.uptime || 0
+          });
+        }
+      }
+    }
+    // Sort by uptime descending
+    active.sort((a, b) => b.uptime - a.uptime);
+    instances = active.slice(0, 10).map(i => i.uri);
+  } catch (err) {
+    console.warn("[Invidious] Failed to fetch live instances, falling back to defaults:", err.message);
+    instances = [
+      "https://invidious.projectsegfau.lt",
+      "https://invidious.nerdvpn.de",
+      "https://invidious.tiekoetter.com",
+      "https://yewtu.be"
+    ];
+  }
 
+  // Try to extract direct video stream from healthy instances
   for (const instance of instances) {
     try {
-      console.log(`[Invidious] Querying ${instance} for video ${videoId}...`);
+      console.log(`[Invidious] Trying ${instance} for video ${videoId}...`);
       const response = await axios.get(`${instance}/api/v1/videos/${videoId}?local=true`, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -265,7 +289,7 @@ async function getInvidiousDownloadUrl(videoUrl, resolution) {
     }
   }
 
-  throw new Error("All Invidious instances failed to extract direct video stream.");
+  throw new Error("All public Invidious instances failed to extract direct video stream.");
 }
 
 async function downloadFromUrl(streamUrl, destPath, onProgress, onComplete, onError, mockProc) {
