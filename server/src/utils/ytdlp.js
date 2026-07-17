@@ -124,8 +124,11 @@ export const DEFAULT_FORMATS = [
  * Get video info from YouTube URL
  */
 export const getVideoInfo = async (url) => {
+  const cookiesPath = path.join(__dirname, "..", "..", "cookies.txt");
+  const cookiesArg = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : "";
+
   const { stdout } = await execAsync(
-    `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" "${url}"`,
+    `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" ${cookiesArg} "${url}"`,
     { timeout: 60000 }
   );
   const info = JSON.parse(stdout.trim());
@@ -221,6 +224,11 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
     "--extractor-args", "youtube:player-client=ios,tv_embedded,mweb",
     "--compat-options", "no-youtube-unavailable-videos",
   ];
+
+  const cookiesPath = path.join(__dirname, "..", "..", "cookies.txt");
+  if (fs.existsSync(cookiesPath)) {
+    args.push("--cookies", cookiesPath);
+  }
 
   // Pass custom detected ffmpeg path to yt-dlp
   if (FFMPEG_CMD && path.isAbsolute(FFMPEG_CMD)) {
