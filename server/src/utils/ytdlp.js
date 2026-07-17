@@ -33,6 +33,13 @@ function findExecutable(name) {
 
   // 3. List of standard candidates
   const candidates = [
+    // ── Linux/Render pip install paths ────────────────────────────────
+    `/usr/local/bin/${name}`,
+    `/usr/bin/${name}`,
+    path.join(os_homedir(), ".local", "bin", name),
+    `/opt/render/.local/bin/${name}`,
+    `/opt/venv/bin/${name}`,
+    // ── Windows pip/Python paths ──────────────────────────────────────
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "Scripts", `${name}.exe`),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "Scripts", `${name}.exe`),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "Scripts", `${name}.exe`),
