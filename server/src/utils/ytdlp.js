@@ -16,85 +16,109 @@ function os_homedir() {
 
 // ─── Find executable helper ───────────────────────────────────────────────────
 function findExecutable(name) {
-  // 1. Try local bin folder first (downloaded during postinstall)
-  const localBin = path.join(__dirname, "..", "..", "bin", process.platform === "win32" ? `${name}.exe` : name);
+  const isWin = process.platform === "win32";
+
+  // 1. Try local bin folder first (downloaded during postinstall/npm install)
+  const localBin = path.join(__dirname, "..", "..", "bin", isWin ? `${name}.exe` : name);
   if (fs.existsSync(localBin)) {
-    console.log(`✅ ${name} detected successfully at local bin:`, localBin);
+    try {
+      fs.accessSync(localBin, fs.constants.X_OK);
+    } catch (_) {
+      try { fs.chmodSync(localBin, "755"); } catch (_2) {}
+    }
+    console.log(`✅ ${name} detected at local bin:`, localBin);
     return localBin;
   }
 
-  // 2. Try command directly in case it is already in global system PATH
-  try {
-    const versionArg = name === "ffmpeg" ? "-version" : "--version";
-    execSync(`"${name}" ${versionArg}`, { stdio: "ignore", timeout: 2000 });
-    console.log(`✅ ${name} is globally available via PATH`);
-    return name;
-  } catch (_) {}
-
-  // 3. List of standard candidates
-  const candidates = [
-    // ── Linux/Render pip install paths ────────────────────────────────
-    `/usr/local/bin/${name}`,
-    `/usr/bin/${name}`,
-    path.join(os_homedir(), ".local", "bin", name),
-    `/opt/render/.local/bin/${name}`,
-    `/opt/venv/bin/${name}`,
-    // ── Windows pip/Python paths ──────────────────────────────────────
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "Scripts", `${name}.exe`),
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "Scripts", `${name}.exe`),
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "Scripts", `${name}.exe`),
-    `C:\\Python312\\Scripts\\${name}.exe`,
-    `C:\\Python311\\Scripts\\${name}.exe`,
-    `C:\\Python310\\Scripts\\${name}.exe`,
-    path.join(os_homedir(), "AppData", "Local", "Microsoft", "WindowsApps", `${name}.exe`),
-    path.join(os_homedir(), "AppData", "Roaming", "Python", "Python312", "Scripts", `${name}.exe`),
-  ];
-
-  // 3. Dynamic Winget package folder scanner
-  const wingetBase = path.join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Packages");
-  if (fs.existsSync(wingetBase)) {
+  // 2. On Linux/Mac: use 'which' to find system-installed binary (pip install yt-dlp)
+  if (!isWin) {
     try {
-      const dirs = fs.readdirSync(wingetBase);
-      for (const d of dirs) {
-        if (d.toLowerCase().includes(name.toLowerCase())) {
-          // Direct check
-          const direct = path.join(wingetBase, d, `${name}.exe`);
-          if (fs.existsSync(direct)) candidates.push(direct);
+      const found = execSync(`which ${name}`, { stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })
+        .toString().trim();
+      if (found) {
+        console.log(`✅ ${name} found via which:`, found);
+        return found;
+      }
+    } catch (_) {}
 
-          // Bin check
-          const binPath = path.join(wingetBase, d, "bin", `${name}.exe`);
-          if (fs.existsSync(binPath)) candidates.push(binPath);
+    // 3. Explicit Linux candidates (pip --user, virtualenv, etc.)
+    const linuxCandidates = [
+      `/usr/local/bin/${name}`,
+      `/usr/bin/${name}`,
+      `/bin/${name}`,
+      path.join(os_homedir(), ".local", "bin", name),
+      `/opt/render/.local/bin/${name}`,
+      `/opt/venv/bin/${name}`,
+      `/home/render/.local/bin/${name}`,
+    ];
+    for (const cmd of linuxCandidates) {
+      if (fs.existsSync(cmd)) {
+        console.log(`✅ ${name} found at Linux candidate:`, cmd);
+        return cmd;
+      }
+    }
+  }
 
-          // Subfolders check (e.g. ffmpeg-version-win64-gpl/bin/ffmpeg.exe)
-          const pkgDir = path.join(wingetBase, d);
-          const subs = fs.readdirSync(pkgDir);
-          for (const sub of subs) {
-            const subPath = path.join(pkgDir, sub);
+  // 4. On Windows: try the bare command in PATH (handles global installs like winget/scoop)
+  if (isWin) {
+    try {
+      const versionArg = name === "ffmpeg" ? "-version" : "--version";
+      execSync(`"${name}" ${versionArg}`, { stdio: "ignore", timeout: 2000 });
+      console.log(`✅ ${name} is globally available via PATH`);
+      return name;
+    } catch (_) {}
+
+    // 5. Windows pip/Python candidate paths
+    const winCandidates = [
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "Scripts", `${name}.exe`),
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "Scripts", `${name}.exe`),
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "Scripts", `${name}.exe`),
+      `C:\\Python312\\Scripts\\${name}.exe`,
+      `C:\\Python311\\Scripts\\${name}.exe`,
+      `C:\\Python310\\Scripts\\${name}.exe`,
+      path.join(os_homedir(), "AppData", "Local", "Microsoft", "WindowsApps", `${name}.exe`),
+      path.join(os_homedir(), "AppData", "Roaming", "Python", "Python312", "Scripts", `${name}.exe`),
+    ];
+
+    // Dynamic Winget package scanner
+    const wingetBase = path.join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Packages");
+    if (fs.existsSync(wingetBase)) {
+      try {
+        const dirs = fs.readdirSync(wingetBase);
+        for (const d of dirs) {
+          if (d.toLowerCase().includes(name.toLowerCase())) {
+            const direct = path.join(wingetBase, d, `${name}.exe`);
+            if (fs.existsSync(direct)) winCandidates.push(direct);
+            const binPath = path.join(wingetBase, d, "bin", `${name}.exe`);
+            if (fs.existsSync(binPath)) winCandidates.push(binPath);
+            const pkgDir = path.join(wingetBase, d);
             try {
-              if (fs.statSync(subPath).isDirectory()) {
-                const subBin = path.join(subPath, "bin", `${name}.exe`);
-                if (fs.existsSync(subBin)) candidates.push(subBin);
-
-                const subDirect = path.join(subPath, `${name}.exe`);
-                if (fs.existsSync(subDirect)) candidates.push(subDirect);
+              for (const sub of fs.readdirSync(pkgDir)) {
+                const subPath = path.join(pkgDir, sub);
+                if (fs.statSync(subPath).isDirectory()) {
+                  const subBin = path.join(subPath, "bin", `${name}.exe`);
+                  if (fs.existsSync(subBin)) winCandidates.push(subBin);
+                  const subDirect = path.join(subPath, `${name}.exe`);
+                  if (fs.existsSync(subDirect)) winCandidates.push(subDirect);
+                }
               }
             } catch (_) {}
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
+
+    for (const cmd of winCandidates) {
+      try {
+        const versionArg = name === "ffmpeg" ? "-version" : "--version";
+        execSync(`"${cmd}" ${versionArg}`, { stdio: "ignore", timeout: 3000 });
+        console.log(`✅ ${name} detected at:`, cmd);
+        return cmd;
+      } catch (_) {}
+    }
   }
 
-  // 4. Test candidates and return the first working path
-  for (const cmd of candidates) {
-    try {
-      const versionArg = name === "ffmpeg" ? "-version" : "--version";
-      execSync(`"${cmd}" ${versionArg}`, { stdio: "ignore", timeout: 3000 });
-      console.log(`✅ ${name} detected successfully at:`, cmd);
-      return cmd;
-    } catch (_) {}
-  }
-
+  console.warn(`⚠️  ${name} not found on this system.`);
   return null;
 }
 
