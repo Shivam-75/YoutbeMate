@@ -1,0 +1,18 @@
+node_modules/
+
+# Environment variables — NEVER commit this!
+.env
+.env.local
+.env*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Downloaded videos (can be large)
+downloads/
+
+# OS
+.DS_Store
+Thumbs.db
+*.env
