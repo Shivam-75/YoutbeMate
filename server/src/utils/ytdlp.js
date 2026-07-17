@@ -2,9 +2,13 @@ import { exec, execSync, spawn } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import ffmpegPath from "ffmpeg-static";
 
 const execAsync = promisify(exec);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function os_homedir() {
   return process.env.USERPROFILE || process.env.HOME || "C:\\Users\\Default";
@@ -28,8 +32,12 @@ function findExecutable(name) {
     candidates.push(ffmpegPath);
   }
 
-  // Prioritize local project bin folder (where postinstall downloads yt-dlp)
+  // Prioritize relative bin folder inside server package
+  const relativeBinDir = path.join(__dirname, "..", "..", "bin");
+
   candidates.push(
+    path.join(relativeBinDir, name),
+    path.join(relativeBinDir, `${name}.exe`),
     path.join(process.cwd(), "bin", name),
     path.join(process.cwd(), "bin", `${name}.exe`),
     name,
