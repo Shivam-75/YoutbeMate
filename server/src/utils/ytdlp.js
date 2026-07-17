@@ -97,7 +97,7 @@ export const DEFAULT_FORMATS = [
  */
 export const getVideoInfo = async (url) => {
   const { stdout } = await execAsync(
-    `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --user-agent "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=android_vr,web_creator,tv_embedded" "${url}"`,
+    `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" "${url}"`,
     { timeout: 60000 }
   );
   const info = JSON.parse(stdout.trim());
@@ -168,9 +168,10 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
       : "bestvideo+bestaudio/best";
   } else {
     const res = parseInt(resolution);
+    // Tiered fallback: try exact res → any lower res → best available
     formatSelector = langFilter
-      ? `bestvideo[height<=${res}]+bestaudio${langFilter}/bestvideo[height<=${res}]+bestaudio/best`
-      : `bestvideo[height<=${res}]+bestaudio/best`;
+      ? `bestvideo[height<=${res}]+bestaudio${langFilter}/bestvideo[height<=${res}]+bestaudio/bestvideo+bestaudio/best`
+      : `bestvideo[height<=${res}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${res}]+bestaudio/bestvideo+bestaudio/best`;
   }
 
   const args = [
@@ -181,14 +182,15 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
     "--no-playlist",
     "--newline",
     "--no-check-certificate",
+    "--socket-timeout", "30",
     "--buffer-size", "1024K",
-    "--retries", "5",
-    "--fragment-retries", "5",
+    "--retries", "10",
+    "--fragment-retries", "10",
     "--no-part",
     "--force-overwrites",
-    "--user-agent", "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
-    // Try multiple player clients: android_vr (no bot check), then tv_embedded, then web
-    "--extractor-args", "youtube:player-client=android_vr,web_creator,tv_embedded",
+    "--user-agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
+    // ios client is most reliable in 2025 (android_vr is deprecated/blocked)
+    "--extractor-args", "youtube:player-client=ios,tv_embedded,mweb",
     "--compat-options", "no-youtube-unavailable-videos",
   ];
 
