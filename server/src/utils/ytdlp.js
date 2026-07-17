@@ -2,14 +2,8 @@ import { exec, execSync, spawn } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
-import ffmpegPath from "ffmpeg-static";
-import axios from "axios";
 
 const execAsync = promisify(exec);
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 function os_homedir() {
   return process.env.USERPROFILE || process.env.HOME || "C:\\Users\\Default";
@@ -26,27 +20,9 @@ function findExecutable(name) {
   } catch (_) {}
 
   // 2. List of standard candidates
-  const candidates = [];
-  
-  // Prioritize imported static path for ffmpeg
-  if (name === "ffmpeg" && ffmpegPath) {
-    candidates.push(ffmpegPath);
-  }
-
-  // Prioritize relative bin folder inside server package
-  const relativeBinDir = path.join(__dirname, "..", "..", "bin");
-
-  candidates.push(
-    path.join(relativeBinDir, name),
-    path.join(relativeBinDir, `${name}.exe`),
-    path.join(process.cwd(), "bin", name),
-    path.join(process.cwd(), "bin", `${name}.exe`),
+  const candidates = [
     name,
-    `${name}.exe`
-  );
-
-  // standard candidates fallback
-  candidates.push(
+    `${name}.exe`,
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "Scripts", `${name}.exe`),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "Scripts", `${name}.exe`),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "Scripts", `${name}.exe`),
@@ -55,7 +31,7 @@ function findExecutable(name) {
     `C:\\Python310\\Scripts\\${name}.exe`,
     path.join(os_homedir(), "AppData", "Local", "Microsoft", "WindowsApps", `${name}.exe`),
     path.join(os_homedir(), "AppData", "Roaming", "Python", "Python312", "Scripts", `${name}.exe`),
-  );
+  ];
 
   // 3. Dynamic Winget package folder scanner
   const wingetBase = path.join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Packages");
@@ -94,14 +70,9 @@ function findExecutable(name) {
 
   // 4. Test candidates and return the first working path
   for (const cmd of candidates) {
-    // Trust absolute paths if they exist to avoid PyInstaller startup timeout on slow VMs
-    if (path.isAbsolute(cmd) && fs.existsSync(cmd)) {
-      console.log(`✅ ${name} detected successfully (trusted absolute path):`, cmd);
-      return cmd;
-    }
     try {
       const versionArg = name === "ffmpeg" ? "-version" : "--version";
-      execSync(`"${cmd}" ${versionArg}`, { stdio: "ignore", timeout: 8000 });
+      execSync(`"${cmd}" ${versionArg}`, { stdio: "ignore", timeout: 3000 });
       console.log(`✅ ${name} detected successfully at:`, cmd);
       return cmd;
     } catch (_) {}
@@ -125,11 +96,8 @@ export const DEFAULT_FORMATS = [
  * Get video info from YouTube URL
  */
 export const getVideoInfo = async (url) => {
-  const cookiesPath = path.join(__dirname, "..", "..", "cookies.txt");
-  const cookiesArg = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : "";
-
   const { stdout } = await execAsync(
-    `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" ${cookiesArg} "${url}"`,
+    `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" "${url}"`,
     { timeout: 60000 }
   );
   const info = JSON.parse(stdout.trim());
@@ -180,165 +148,6 @@ export const getVideoInfo = async (url) => {
   };
 };
 
-// ─── Cobalt API Fallback Helpers ───────────────────────────────────────────────
-async function getCobaltDownloadUrl(videoUrl, resolution) {
-  const payload = {
-    url: videoUrl,
-    vQuality: resolution || "720",
-    filenamePattern: "classic"
-  };
-
-  const endpoints = [
-    "https://api.cobalt.tools/api/json",
-    "https://co.wuk.sh/api/json"
-  ];
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await axios.post(endpoint, payload, {
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        },
-        timeout: 15000
-      });
-
-      if (response.data && response.data.url) {
-        return response.data.url;
-      }
-    } catch (err) {
-      console.warn(`[Cobalt] endpoint ${endpoint} failed:`, err.message);
-    }
-  }
-
-  throw new Error("All fallback extraction APIs failed to parse the video link.");
-}
-
-async function getInvidiousDownloadUrl(videoUrl, resolution) {
-  // Extract video ID from URL
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = videoUrl.match(regExp);
-  const videoId = (match && match[2].length === 11) ? match[2] : null;
-  if (!videoId) {
-    throw new Error("Could not extract YouTube video ID from URL");
-  }
-
-  // Fetch healthy instances dynamically from official directory
-  let instances = [];
-  try {
-    console.log("[Invidious] Fetching active instances from invidious.io...");
-    const res = await axios.get("https://api.invidious.io/instances.json", { timeout: 10000 });
-    const data = res.data;
-    
-    const active = [];
-    if (Array.isArray(data)) {
-      for (const entry of data) {
-        const info = entry[1];
-        if (info && info.type === "https" && info.monitor && info.monitor.down === false && info.monitor.enabled === true) {
-          active.push({
-            uri: info.uri,
-            uptime: info.monitor.uptime || 0
-          });
-        }
-      }
-    }
-    // Sort by uptime descending
-    active.sort((a, b) => b.uptime - a.uptime);
-    instances = active.slice(0, 10).map(i => i.uri);
-  } catch (err) {
-    console.warn("[Invidious] Failed to fetch live instances, falling back to defaults:", err.message);
-    instances = [
-      "https://invidious.projectsegfau.lt",
-      "https://invidious.nerdvpn.de",
-      "https://invidious.tiekoetter.com",
-      "https://yewtu.be"
-    ];
-  }
-
-  // Try to extract direct video stream from healthy instances
-  for (const instance of instances) {
-    try {
-      console.log(`[Invidious] Trying ${instance} for video ${videoId}...`);
-      const response = await axios.get(`${instance}/api/v1/videos/${videoId}?local=true`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        },
-        timeout: 10000
-      });
-
-      const info = response.data;
-      if (info && info.formatStreams && info.formatStreams.length > 0) {
-        const targetLabel = `${resolution}p`;
-        let matchStream = info.formatStreams.find(s => s.qualityLabel === targetLabel);
-        if (!matchStream) {
-          // Fallback to any mp4 format
-          matchStream = info.formatStreams.find(s => s.type.includes("mp4")) || info.formatStreams[0];
-        }
-
-        if (matchStream && matchStream.url) {
-          let finalUrl = matchStream.url;
-          if (finalUrl.startsWith("/")) {
-            finalUrl = `${instance}${finalUrl}`;
-          }
-          return finalUrl;
-        }
-      }
-    } catch (err) {
-      console.warn(`[Invidious] Instance ${instance} failed:`, err.message);
-    }
-  }
-
-  throw new Error("All public Invidious instances failed to extract direct video stream.");
-}
-
-async function downloadFromUrl(streamUrl, destPath, onProgress, onComplete, onError, mockProc) {
-  const controller = new AbortController();
-  mockProc.abortController = controller;
-
-  try {
-    const response = await axios({
-      method: "get",
-      url: streamUrl,
-      responseType: "stream",
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      }
-    });
-
-    const totalBytes = parseInt(response.headers["content-length"], 10) || 0;
-    let downloadedBytes = 0;
-    const file = fs.createWriteStream(destPath);
-    
-    response.data.pipe(file);
-
-    response.data.on("data", (chunk) => {
-      downloadedBytes += chunk.length;
-      if (totalBytes > 0) {
-        const percent = (downloadedBytes / totalBytes) * 100;
-        onProgress?.(parseFloat(percent.toFixed(1)));
-      }
-    });
-
-    file.on("finish", () => {
-      file.close();
-      const fileSize = fs.existsSync(destPath) ? fs.statSync(destPath).size : 0;
-      onComplete?.({ filePath: destPath, fileSize });
-    });
-
-    file.on("error", (err) => {
-      file.close();
-      fs.unlink(destPath, () => {});
-      onError?.(err);
-    });
-
-  } catch (err) {
-    fs.unlink(destPath, () => {});
-    onError?.(err);
-  }
-}
-
 /**
  * Download video — returns the spawn process to support pausing/resuming
  */
@@ -385,11 +194,6 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
     "--compat-options", "no-youtube-unavailable-videos",
   ];
 
-  const cookiesPath = path.join(__dirname, "..", "..", "cookies.txt");
-  if (fs.existsSync(cookiesPath)) {
-    args.push("--cookies", cookiesPath);
-  }
-
   // Pass custom detected ffmpeg path to yt-dlp
   if (FFMPEG_CMD && path.isAbsolute(FFMPEG_CMD)) {
     args.push("--ffmpeg-location", path.dirname(FFMPEG_CMD));
@@ -418,63 +222,20 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
     if (mergeMatch) filePath = mergeMatch[1].trim();
   });
 
-  let stderrBuffer = "";
-  proc.stderr.on("data", (d) => {
-    const text = d.toString();
-    stderrBuffer += text;
-    console.error("[yt-dlp]", text);
-  });
+  proc.stderr.on("data", (d) => console.error("[yt-dlp]", d.toString()));
 
-  let abortController = null;
-  const mockProc = {
-    kill: () => {
-      if (proc && typeof proc.kill === "function") {
-        try { proc.kill("SIGINT"); } catch (_) {}
-      }
-      if (mockProc.abortController) {
-        try { mockProc.abortController.abort(); } catch (_) {}
-      }
-    }
-  };
-
-  proc.on("close", async (code) => {
+  proc.on("close", (code) => {
     if (code === 0) {
       const mp4 = filePath.endsWith(".mp4") ? filePath : filePath + ".mp4";
       const final = fs.existsSync(mp4) ? mp4 : filePath;
       const fileSize = fs.existsSync(final) ? fs.statSync(final).size : 0;
       onComplete?.({ filePath: final, fileSize });
     } else {
-      const cleanErr = stderrBuffer.trim().split("\n").pop() || "";
-      console.log(`[downloadVideo] yt-dlp failed (code ${code}: ${cleanErr}). Trying Cobalt API fallback...`);
-      
-      try {
-        const cobaltUrl = await getCobaltDownloadUrl(url, resolution);
-        console.log(`[downloadVideo] Cobalt extraction success, downloading from: ${cobaltUrl}`);
-        
-        await downloadFromUrl(cobaltUrl, outputPath, onProgress, onComplete, async (fallbackErr) => {
-          console.warn(`[downloadVideo] Cobalt download failed: ${fallbackErr.message}. Trying Invidious fallback...`);
-          await tryInvidiousFallback();
-        }, mockProc);
-      } catch (err) {
-        console.warn(`[downloadVideo] Cobalt extraction failed: ${err.message}. Trying Invidious fallback...`);
-        await tryInvidiousFallback();
-      }
-
-      async function tryInvidiousFallback() {
-        try {
-          const invidiousUrl = await getInvidiousDownloadUrl(url, resolution);
-          console.log(`[downloadVideo] Invidious extraction success, downloading from: ${invidiousUrl}`);
-          await downloadFromUrl(invidiousUrl, outputPath, onProgress, onComplete, (invErr) => {
-            onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback also failed: ${invErr.message}`));
-          }, mockProc);
-        } catch (invErr) {
-          onError?.(new Error(`yt-dlp failed: ${cleanErr}. Fallback also failed: ${invErr.message}`));
-        }
-      }
+      onError?.(new Error(`yt-dlp exited with code ${code}`));
     }
   });
 
   proc.on("error", (e) => onError?.(new Error(`Cannot start yt-dlp: ${e.message}`)));
 
-  return mockProc;
+  return proc;
 };

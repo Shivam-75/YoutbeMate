@@ -4,10 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
     "dev": "nodemon index.js",
-    "tunnel": "node start_tunnel.js",
-    "postinstall": "node install_ytdlp.js"
+    "tunnel": "node start_tunnel.js"
   },
   "keywords": [],
   "author": "",
@@ -21,7 +19,6 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "ffmpeg-static": "^5.2.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.7.3",
     "morgan": "^1.11.0",
