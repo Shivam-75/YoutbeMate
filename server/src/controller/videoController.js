@@ -15,6 +15,7 @@ import os from "os";
 import fs from "fs";
 import mongoose from "mongoose";
 import { exec } from "child_process";
+import axios from "axios";
 
 // ─── Download directory (mutable, persists while server runs) ─────────────────
 let DOWNLOAD_DIR = path.join(os.homedir(), "Downloads", "VideoDownloader");
@@ -229,9 +230,10 @@ export const startDownload = async (req, res) => {
 
   // Fallback if direct extraction yielded empty string
   if (!directUrl) {
-    const host = req.get("host") || "localhost:5000";
-    const protocol = req.protocol || "https";
-    directUrl = `${protocol}://${host}/api/video/file/${encodeURIComponent(fileName)}`;
+    const host = req.get("host") || "youtbemate.onrender.com";
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+    const encodedUrl = encodeURIComponent(url);
+    directUrl = `${protocol}://${host}/api/video/file/${encodeURIComponent(fileName)}?url=${encodedUrl}&res=${resolution}`;
   }
 
   // Return Render PRD compliant response format
@@ -639,12 +641,16 @@ export const getQuickPaths = (req, res) => {
   res.json({ success: true, data: quickPaths, current: DOWNLOAD_DIR });
 };
 
-// ─── Stream Downloaded File ──────────────────────────────────────────────────
-export const streamFile = (req, res) => {
+// ─── Stream Downloaded File (Disk or Dynamic Proxy Stream) ───────────────────
+export const streamFile = async (req, res) => {
   const { filename } = req.params;
+  const videoUrl = req.query.url;
+  const resolution = req.query.res || "720";
+
   const filePath = path.join(DOWNLOAD_DIR, filename);
 
   if (fs.existsSync(filePath)) {
+    res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     return res.sendFile(filePath);
   }
@@ -664,10 +670,45 @@ export const streamFile = (req, res) => {
 
       if (matched) {
         const matchedPath = path.join(DOWNLOAD_DIR, matched);
+        res.setHeader("Content-Type", "video/mp4");
         res.setHeader("Content-Disposition", `attachment; filename="${matched}"`);
         return res.sendFile(matchedPath);
       }
     } catch (_) {}
+  }
+
+  // Live stream proxy fallback if file not pre-saved on disk yet
+  if (videoUrl) {
+    try {
+      console.log(`[streamFile] Proxying live video stream for ${videoUrl}...`);
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+      let directUrl = "";
+      try {
+        const streamResult = await ytGetStreamUrl(videoUrl, resolution);
+        if (streamResult && streamResult.streamUrl) {
+          directUrl = streamResult.streamUrl;
+        }
+      } catch (_) {}
+
+      if (directUrl) {
+        const streamResponse = await axios({
+          method: "get",
+          url: directUrl,
+          responseType: "stream",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+          }
+        });
+        if (streamResponse.headers["content-length"]) {
+          res.setHeader("Content-Length", streamResponse.headers["content-length"]);
+        }
+        return streamResponse.data.pipe(res);
+      }
+    } catch (err) {
+      console.warn("[streamFile] Live stream proxy error:", err.message);
+    }
   }
 
   res.status(404).json({ success: false, message: "File not found on server" });
