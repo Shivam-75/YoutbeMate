@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,8 +50,15 @@ async function install() {
     console.log(`[install_ytdlp] Download complete: ${dest}`);
 
     if (!isWindows) {
-      fs.chmodSync(dest, "755");
-      console.log(`[install_ytdlp] Set executable permissions for ${binaryName}`);
+      try {
+        fs.chmodSync(dest, "755");
+        console.log(`[install_ytdlp] Set executable permissions for ${binaryName}`);
+      } catch (_) {}
+
+      try {
+        execSync("pip3 install -U yt-dlp || pip install -U yt-dlp || python3 -m pip install -U yt-dlp", { stdio: "ignore" });
+        console.log("[install_ytdlp] Successfully updated yt-dlp via pip");
+      } catch (_) {}
     }
   } catch (err) {
     console.error(`[install_ytdlp] Error downloading yt-dlp:`, err.message);

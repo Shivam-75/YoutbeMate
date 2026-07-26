@@ -133,8 +133,21 @@ export const spawnYtDlp = (args, options = {}) => {
   if (YTDLP_CMD && YTDLP_CMD.includes("/")) {
     return spawn("python3", [YTDLP_CMD, ...args], options);
   }
-  return spawn(YTDLP_CMD || "yt-dlp", args, options);
+  return spawn("python3", ["-m", "yt_dlp", ...args], options);
 };
+
+export async function execYtDlp(argsStr, options = {}) {
+  const isWin = process.platform === "win32";
+  let cmd = "";
+  if (isWin) {
+    cmd = `"${YTDLP_CMD}" ${argsStr}`;
+  } else if (YTDLP_CMD && YTDLP_CMD.includes("/")) {
+    cmd = `python3 "${YTDLP_CMD}" ${argsStr}`;
+  } else {
+    cmd = `python3 -m yt_dlp ${argsStr} || "${YTDLP_CMD || "yt-dlp"}" ${argsStr}`;
+  }
+  return execAsync(cmd, { timeout: 60000, ...options });
+}
 
 // Fallback format configurations
 export const DEFAULT_FORMATS = [
@@ -382,9 +395,8 @@ export const getVideoInfo = async (url) => {
   const videoId = (match && match[2].length === 11) ? match[2] : null;
 
   try {
-    const { stdout } = await execAsync(
-      `"${YTDLP_CMD}" --dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" "${url}"`,
-      { timeout: 60000 }
+    const { stdout } = await execYtDlp(
+      `--dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" "${url}"`
     );
     const info = JSON.parse(stdout.trim());
 
@@ -548,7 +560,7 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
   }
 
   console.log(`[downloadVideo] running yt-dlp with arguments:`, args);
-  const proc = spawn(YTDLP_CMD, args);
+  const proc = spawnYtDlp(args);
   let lastProgress = -1;
   let filePath = outputPath;
 
