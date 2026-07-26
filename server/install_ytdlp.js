@@ -40,7 +40,7 @@ async function install() {
   const binaryName = isWindows ? "yt-dlp.exe" : "yt-dlp";
   const url = isWindows
     ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-    : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+    : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
 
   const dest = path.join(binDir, binaryName);
 
