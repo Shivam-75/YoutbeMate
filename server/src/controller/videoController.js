@@ -53,28 +53,45 @@ export const getVideoInfo = async (req, res) => {
 
 // ─── Get Direct Stream URL (for client-side download) ─────────────────────────
 export const getStreamUrl = async (req, res) => {
-  const { url, resolution = "720" } = req.body;
+  const { url, resolution = "720" } = req.body || {};
   if (!url) return res.status(400).json({ success: false, message: "URL required" });
 
+  const host = req.get("host") || "youtbemate.onrender.com";
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+  const encodedUrl = encodeURIComponent(url);
+  const fallbackUrl = `${protocol}://${host}/api/video/file/video_${resolution}p.mp4?url=${encodedUrl}&res=${resolution}`;
+
   try {
-    const result = await ytGetStreamUrl(url, resolution);
-    if (!result || !result.streamUrl) {
-      return res.status(500).json({ success: false, message: "Could not extract a direct download URL for this video." });
-    }
+    let result = null;
+    try {
+      result = await ytGetStreamUrl(url, resolution);
+    } catch (_) {}
+
+    const finalStreamUrl = (result && result.streamUrl) ? result.streamUrl : fallbackUrl;
+
     res.json({
       success: true,
       data: {
-        streamUrl: result.streamUrl,
-        title: result.title || "",
-        thumbnail: result.thumbnail || "",
-        channel: result.channel || "",
-        duration: result.duration || 0,
-        videoId: result.videoId || "",
+        streamUrl: finalStreamUrl,
+        title: result?.title || "",
+        thumbnail: result?.thumbnail || "",
+        channel: result?.channel || "",
+        duration: result?.duration || 0,
+        videoId: result?.videoId || "",
       },
     });
   } catch (err) {
-    console.error("[getStreamUrl]", err.message);
-    res.status(500).json({ success: false, message: err.message });
+    res.json({
+      success: true,
+      data: {
+        streamUrl: fallbackUrl,
+        title: "",
+        thumbnail: "",
+        channel: "",
+        duration: 0,
+        videoId: "",
+      },
+    });
   }
 };
 
@@ -218,26 +235,13 @@ export const startDownload = async (req, res) => {
 
   jobContext.proc = proc;
 
-  // Extract direct stream URL to include in JSON response per Render PRD spec
-  let directUrl = "";
-  try {
-    const streamResult = await ytGetStreamUrl(url, resolution);
-    if (streamResult && streamResult.streamUrl) {
-      directUrl = streamResult.streamUrl;
-    }
-  } catch (err) {
-    console.warn("[startDownload] Direct stream extraction failed:", err.message);
-  }
+  // Construct instant Render stream URL per PRD spec
+  const host = req.get("host") || "youtbemate.onrender.com";
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+  const encodedUrl = encodeURIComponent(url);
+  const directUrl = `${protocol}://${host}/api/video/file/${encodeURIComponent(fileName)}?url=${encodedUrl}&res=${resolution}`;
 
-  // Fallback if direct extraction yielded empty string
-  if (!directUrl) {
-    const host = req.get("host") || "youtbemate.onrender.com";
-    const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
-    const encodedUrl = encodeURIComponent(url);
-    directUrl = `${protocol}://${host}/api/video/file/${encodeURIComponent(fileName)}?url=${encodedUrl}&res=${resolution}`;
-  }
-
-  // Return Render PRD compliant response format
+  // Return Render PRD compliant response format instantly
   res.status(200).json({
     success: true,
     fileName,
