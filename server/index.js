@@ -6,6 +6,7 @@ import Db from "./src/database/Db.js";
 import cors from "cors";
 import morgan from "morgan";
 import videoRoutes from "./src/routes/videoRoutes.js";
+import { startDownload } from "./src/controller/videoController.js";
 
 config();
 
@@ -41,9 +42,14 @@ app.use(morgan("dev"));
 
 // Routes
 app.use("/api/video", videoRoutes);
+app.post("/api/download", startDownload);
 
 app.get("/", (req, res) => {
   res.json({ success: true, message: "🎬 Video Downloader API Running!" });
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // Start server immediately — DB connects in background (no blocking)

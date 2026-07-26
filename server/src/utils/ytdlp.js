@@ -402,9 +402,12 @@ export const getVideoInfo = async (url) => {
       ? formats.sort((a, b) => a.height - b.height)
       : DEFAULT_FORMATS;
 
-    const bestCombined = info.formats
-      ? info.formats.find(f => f.vcodec !== "none" && f.acodec !== "none" && f.url)
-      : null;
+    const combinedFormats = info.formats
+      ? info.formats.filter(f => f.vcodec !== "none" && f.acodec !== "none" && f.url)
+      : [];
+    const bestCombined = combinedFormats.length > 0
+      ? combinedFormats.reduce((prev, curr) => ((curr.height || 0) > (prev.height || 0) ? curr : prev))
+      : (info.formats ? info.formats.find(f => f.url) : null);
     const streamUrl = bestCombined ? bestCombined.url : "";
 
     return {
@@ -634,12 +637,15 @@ async function getPipedDownloadUrl(videoUrl, resolution) {
       });
       const data = response.data;
       if (data && data.videoStreams && data.videoStreams.length > 0) {
-        let mp4Streams = data.videoStreams.filter(s => s.mimeType && s.mimeType.includes("video/mp4"));
-        if (mp4Streams.length === 0) mp4Streams = data.videoStreams;
+        let streams = data.videoStreams.filter(s => s.videoOnly === false && s.url);
+        if (streams.length === 0) {
+          streams = data.videoStreams.filter(s => s.mimeType && s.mimeType.includes("video/mp4") && s.url);
+        }
+        if (streams.length === 0) streams = data.videoStreams.filter(s => s.url);
 
-        let selected = mp4Streams.find(s => s.height === targetHeight);
+        let selected = streams.find(s => s.height === targetHeight);
         if (!selected) {
-          const sorted = mp4Streams.sort((a, b) => (b.height || 0) - (a.height || 0));
+          const sorted = streams.sort((a, b) => (b.height || 0) - (a.height || 0));
           selected = sorted.find(s => (s.height || 0) <= targetHeight) || sorted[0];
         }
 

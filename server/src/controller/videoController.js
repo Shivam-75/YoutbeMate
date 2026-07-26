@@ -110,10 +110,16 @@ export const getCategories = async (req, res) => {
   }
 };
 
-// ─── Start Download (Job-based — no SSE) ────────────────────────────────────
+// ─── Start Download (Job-based & Render PRD Compliant) ──────────────────────
 export const startDownload = async (req, res) => {
-  const { url, resolution = "720", title, thumbnail, channel, duration, videoId, audioLang = "default", deviceId = "" } = req.body;
-  if (!url) return res.status(400).json({ success: false, message: "URL required" });
+  const { url, resolution = "720", title, thumbnail, channel, duration, videoId, audioLang = "default", deviceId = "" } = req.body || {};
+  
+  if (!url || typeof url !== "string" || !url.trim()) {
+    return res.status(400).json({ success: false, message: "Invalid request. Parameter 'url' is required." });
+  }
+
+  const safeTitle = (title || "video").replace(/[^a-zA-Z0-9\u0900-\u097F ]/g, "").replace(/\s+/g, "_").slice(0, 60);
+  const fileName = `${safeTitle}_${resolution}p.mp4`;
 
   const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   let downloadId = null;
@@ -132,7 +138,7 @@ export const startDownload = async (req, res) => {
     });
     downloadId = downloadRecord._id.toString();
   } catch (dbErr) {
-    console.warn("⚠️ Database log failed (proceeding with local download):", dbErr.message);
+    console.warn("⚠️ Database log failed (proceeding with download):", dbErr.message);
   }
 
   // Set the job in-memory to track download progress regardless of DB status
@@ -147,7 +153,6 @@ export const startDownload = async (req, res) => {
     audioLang,
     lastDbProgress: 0,
     lastDbTime: 0,
-    // Store video metadata for history display
     videoId: videoId || "",
     title: title || "Unknown",
     thumbnail: thumbnail || "",
@@ -211,7 +216,33 @@ export const startDownload = async (req, res) => {
 
   jobContext.proc = proc;
 
-  res.json({ success: true, jobId, downloadId });
+  // Extract direct stream URL to include in JSON response per Render PRD spec
+  let directUrl = "";
+  try {
+    const streamResult = await ytGetStreamUrl(url, resolution);
+    if (streamResult && streamResult.streamUrl) {
+      directUrl = streamResult.streamUrl;
+    }
+  } catch (err) {
+    console.warn("[startDownload] Direct stream extraction failed:", err.message);
+  }
+
+  // Fallback if direct extraction yielded empty string
+  if (!directUrl) {
+    const host = req.get("host") || "localhost:5000";
+    const protocol = req.protocol || "https";
+    directUrl = `${protocol}://${host}/api/video/file/${encodeURIComponent(fileName)}`;
+  }
+
+  // Return Render PRD compliant response format
+  res.status(200).json({
+    success: true,
+    fileName,
+    downloadUrl: directUrl,
+    jobId,
+    downloadId,
+    streamUrl: directUrl,
+  });
 };
 
 // ─── Pause Download ──────────────────────────────────────────────────────────
