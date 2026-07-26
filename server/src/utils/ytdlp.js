@@ -445,20 +445,25 @@ export const getVideoInfo = async (url) => {
       streamUrl,
     };
   } catch (err) {
-    console.warn(`[getVideoInfo] yt-dlp failed: ${err.message}. Attempting Invidious fallback...`);
-    if (videoId) {
-      try {
-        const info = await getInvidiousVideoInfo(videoId);
-        return info;
-      } catch (fallbackErr) {
-        console.error(`[getVideoInfo] Invidious fallback also failed:`, fallbackErr.message);
+    console.warn(`[getVideoInfo] yt-dlp metadata notice: ${err.message}. Using YouTube oEmbed fallback...`);
+    let title = "YouTube Video";
+    let channel = "";
+    let thumbnail = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "";
+
+    try {
+      const oembedRes = await axios.get(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { timeout: 5000 });
+      if (oembedRes.data) {
+        if (oembedRes.data.title) title = oembedRes.data.title;
+        if (oembedRes.data.author_name) channel = oembedRes.data.author_name;
+        if (oembedRes.data.thumbnail_url) thumbnail = oembedRes.data.thumbnail_url;
       }
-    }
+    } catch (_) {}
+
     return {
       videoId: videoId || "",
-      title: "YouTube Video",
-      thumbnail: "",
-      channel: "",
+      title,
+      thumbnail,
+      channel,
       duration: 0,
       viewCount: 0,
       url,
