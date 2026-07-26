@@ -3,6 +3,7 @@ import {
   getVideoInfo as ytGetInfo,
   downloadVideo as ytDownload,
   getDirectStreamUrl as ytGetStreamUrl,
+  spawnYtDlp,
   DEFAULT_FORMATS,
 } from "../utils/ytdlp.js";
 import {
@@ -706,6 +707,23 @@ export const streamFile = async (req, res) => {
         }
         return streamResponse.data.pipe(res);
       }
+
+      // If directUrl unavailable, pipe yt-dlp stdout directly into res
+      console.log(`[streamFile] Spawning yt-dlp stdout stream for ${videoUrl}...`);
+      const proc = spawnYtDlp([
+        videoUrl,
+        "-f", `bestvideo[height<=${resolution}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${resolution}]+bestaudio/best`,
+        "--no-playlist",
+        "--no-check-certificate",
+        "-o", "-"
+      ]);
+
+      proc.stdout.pipe(res);
+
+      proc.on("error", (e) => {
+        console.error("[streamFile] yt-dlp spawn error:", e.message);
+      });
+      return;
     } catch (err) {
       console.warn("[streamFile] Live stream proxy error:", err.message);
     }

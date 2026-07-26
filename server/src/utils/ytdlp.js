@@ -125,6 +125,17 @@ function findExecutable(name) {
 const YTDLP_CMD = findExecutable("yt-dlp") || "yt-dlp";
 const FFMPEG_CMD = findExecutable("ffmpeg");
 
+export const spawnYtDlp = (args, options = {}) => {
+  const isWin = process.platform === "win32";
+  if (isWin) {
+    return spawn(YTDLP_CMD, args, options);
+  }
+  if (YTDLP_CMD && YTDLP_CMD.includes("/")) {
+    return spawn("python3", [YTDLP_CMD, ...args], options);
+  }
+  return spawn(YTDLP_CMD || "yt-dlp", args, options);
+};
+
 // Fallback format configurations
 export const DEFAULT_FORMATS = [
   { formatId: "bestvideo[height<=360]+bestaudio/best[height<=360]", label: "360p", height: 360, filesize: 0, ext: "mp4" },
