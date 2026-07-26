@@ -12,12 +12,7 @@ import {
   getHistory,
   deleteHistory,
   clearHistory,
-  getStorageInfo,
-  getDownloadDir,
-  setDownloadDir,
-  getQuickPaths,
   streamFile,
-  openStorageFolder,
 } from "../controller/videoController.js";
 
 const router = express.Router();
@@ -46,12 +41,5 @@ router.get("/file/:filename", streamFile);
 router.get("/history", getHistory);
 router.delete("/history/clear", clearHistory);
 router.delete("/history/:id", deleteHistory);
-
-// Storage & directory management
-router.get("/storage", getStorageInfo);
-router.get("/storage/dir", getDownloadDir);
-router.post("/storage/dir", setDownloadDir);
-router.get("/storage/quick-paths", getQuickPaths);
-router.post("/storage/open", openStorageFolder);
 
 export default router;
