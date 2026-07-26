@@ -1,6 +1,7 @@
 import express from "express";
 import {
   getVideoInfo,
+  getStreamUrl,
   searchVideos,
   getTrending,
   getCategories,
@@ -28,6 +29,9 @@ router.get("/categories", getCategories);
 
 // Video info (yt-dlp)
 router.post("/info", getVideoInfo);
+
+// Stream URL for client-side download (mobile app)
+router.post("/stream-url", getStreamUrl);
 
 // Download — job based (polling)
 router.post("/download", startDownload);

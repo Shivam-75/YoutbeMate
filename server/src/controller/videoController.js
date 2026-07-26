@@ -2,6 +2,7 @@ import Download from "../models/Download.js";
 import {
   getVideoInfo as ytGetInfo,
   downloadVideo as ytDownload,
+  getDirectStreamUrl as ytGetStreamUrl,
   DEFAULT_FORMATS,
 } from "../utils/ytdlp.js";
 import {
@@ -45,6 +46,33 @@ export const getVideoInfo = async (req, res) => {
         url,
       },
     });
+  }
+};
+
+// ─── Get Direct Stream URL (for client-side download) ─────────────────────────
+export const getStreamUrl = async (req, res) => {
+  const { url, resolution = "720" } = req.body;
+  if (!url) return res.status(400).json({ success: false, message: "URL required" });
+
+  try {
+    const result = await ytGetStreamUrl(url, resolution);
+    if (!result || !result.streamUrl) {
+      return res.status(500).json({ success: false, message: "Could not extract a direct download URL for this video." });
+    }
+    res.json({
+      success: true,
+      data: {
+        streamUrl: result.streamUrl,
+        title: result.title || "",
+        thumbnail: result.thumbnail || "",
+        channel: result.channel || "",
+        duration: result.duration || 0,
+        videoId: result.videoId || "",
+      },
+    });
+  } catch (err) {
+    console.error("[getStreamUrl]", err.message);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 

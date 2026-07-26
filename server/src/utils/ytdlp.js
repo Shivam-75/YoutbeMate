@@ -322,17 +322,31 @@ async function downloadFromUrl(streamUrl, destPath, onProgress, onComplete, onEr
 }
 
 async function runFallbackDownloader(url, resolution, outputPath, onProgress, onComplete, onError, mockProc) {
-  console.log("[downloadVideo] Starting Cobalt API extraction...");
+  console.log("[downloadVideo] Starting Piped API extraction...");
   try {
-    const cobaltUrl = await getCobaltDownloadUrl(url, resolution);
-    console.log(`[downloadVideo] Cobalt extraction success, downloading from: ${cobaltUrl}`);
-    await downloadFromUrl(cobaltUrl, outputPath, onProgress, onComplete, async (fallbackErr) => {
-      console.warn(`[downloadVideo] Cobalt download failed: ${fallbackErr.message}. Trying Invidious fallback...`);
-      await tryInvidiousFallback();
+    const pipedUrl = await getPipedDownloadUrl(url, resolution);
+    console.log(`[downloadVideo] Piped extraction success, downloading from: ${pipedUrl}`);
+    await downloadFromUrl(pipedUrl, outputPath, onProgress, onComplete, async (fallbackErr) => {
+      console.warn(`[downloadVideo] Piped download failed: ${fallbackErr.message}. Trying Cobalt fallback...`);
+      await tryCobaltFallback();
     }, mockProc);
   } catch (err) {
-    console.warn(`[downloadVideo] Cobalt extraction failed: ${err.message}. Trying Invidious fallback...`);
-    await tryInvidiousFallback();
+    console.warn(`[downloadVideo] Piped extraction failed: ${err.message}. Trying Cobalt fallback...`);
+    await tryCobaltFallback();
+  }
+
+  async function tryCobaltFallback() {
+    try {
+      const cobaltUrl = await getCobaltDownloadUrl(url, resolution);
+      console.log(`[downloadVideo] Cobalt extraction success, downloading from: ${cobaltUrl}`);
+      await downloadFromUrl(cobaltUrl, outputPath, onProgress, onComplete, async (fallbackErr) => {
+        console.warn(`[downloadVideo] Cobalt download failed: ${fallbackErr.message}. Trying Invidious fallback...`);
+        await tryInvidiousFallback();
+      }, mockProc);
+    } catch (err) {
+      console.warn(`[downloadVideo] Cobalt extraction failed: ${err.message}. Trying Invidious fallback...`);
+      await tryInvidiousFallback();
+    }
   }
 
   async function tryInvidiousFallback() {
@@ -584,4 +598,105 @@ export const downloadVideo = (url, resolution, outputDir, outputFilename, audioL
   };
 
   return mockProc;
+};
+
+function extractYouTubeVideoId(urlStr) {
+  if (!urlStr) return null;
+  const clean = urlStr.trim();
+  if (clean.length === 11 && !clean.includes("/")) return clean;
+  const m = clean.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/i);
+  return m ? m[1] : null;
+}
+
+async function getPipedDownloadUrl(videoUrl, resolution) {
+  const videoId = extractYouTubeVideoId(videoUrl);
+  if (!videoId) throw new Error("Could not extract YouTube video ID from URL");
+
+  const pipedInstances = [
+    "https://api.piped.privacydev.net",
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.mha.fi",
+    "https://pipedapi.palvelu.org",
+    "https://api.piped.projectsegfau.lt",
+    "https://piped-api.garudalinux.org"
+  ];
+
+  const targetHeight = parseInt(resolution) || 720;
+
+  for (const inst of pipedInstances) {
+    try {
+      console.log(`[Piped] Querying stream from ${inst} for video ${videoId}...`);
+      const response = await axios.get(`${inst}/streams/${videoId}`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        timeout: 10000
+      });
+      const data = response.data;
+      if (data && data.videoStreams && data.videoStreams.length > 0) {
+        let mp4Streams = data.videoStreams.filter(s => s.mimeType && s.mimeType.includes("video/mp4"));
+        if (mp4Streams.length === 0) mp4Streams = data.videoStreams;
+
+        let selected = mp4Streams.find(s => s.height === targetHeight);
+        if (!selected) {
+          const sorted = mp4Streams.sort((a, b) => (b.height || 0) - (a.height || 0));
+          selected = sorted.find(s => (s.height || 0) <= targetHeight) || sorted[0];
+        }
+
+        if (selected && selected.url) {
+          return selected.url;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Piped] Instance ${inst} stream failed:`, err.message);
+    }
+  }
+  throw new Error("All Piped instances failed to extract video stream.");
+}
+
+/**
+ * Get direct stream URL for client-side download
+ * Tries: 1) yt-dlp streamUrl  2) Piped API  3) Cobalt  4) Invidious
+ * Returns { streamUrl, title, thumbnail, channel, duration, videoId }
+ */
+export const getDirectStreamUrl = async (url, resolution = "720") => {
+  // 1. Try yt-dlp first to get stream URL from video info
+  try {
+    const info = await getVideoInfo(url);
+    if (info && info.streamUrl) {
+      console.log("[getDirectStreamUrl] Got stream URL from yt-dlp");
+      return { streamUrl: info.streamUrl, ...info };
+    }
+  } catch (err) {
+    console.warn(`[getDirectStreamUrl] yt-dlp info failed: ${err.message}`);
+  }
+
+  // 2. Try Piped API (Fast & Reliable)
+  try {
+    const pipedUrl = await getPipedDownloadUrl(url, resolution);
+    console.log("[getDirectStreamUrl] Got stream URL from Piped API");
+    return { streamUrl: pipedUrl };
+  } catch (err) {
+    console.warn(`[getDirectStreamUrl] Piped failed: ${err.message}`);
+  }
+
+  // 3. Try Cobalt API
+  try {
+    const cobaltUrl = await getCobaltDownloadUrl(url, resolution);
+    console.log("[getDirectStreamUrl] Got stream URL from Cobalt");
+    return { streamUrl: cobaltUrl };
+  } catch (err) {
+    console.warn(`[getDirectStreamUrl] Cobalt failed: ${err.message}`);
+  }
+
+  // 4. Try Invidious
+  try {
+    const invidiousUrl = await getInvidiousDownloadUrl(url, resolution);
+    console.log("[getDirectStreamUrl] Got stream URL from Invidious");
+    return { streamUrl: invidiousUrl };
+  } catch (err) {
+    console.warn(`[getDirectStreamUrl] Invidious failed: ${err.message}`);
+  }
+
+  throw new Error("All stream URL extraction methods failed.");
 };
