@@ -643,11 +643,34 @@ export const getQuickPaths = (req, res) => {
 export const streamFile = (req, res) => {
   const { filename } = req.params;
   const filePath = path.join(DOWNLOAD_DIR, filename);
+
   if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).json({ success: false, message: "File not found" });
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.sendFile(filePath);
   }
+
+  // Fallback search in DOWNLOAD_DIR for matching filenames or downloadId prefix
+  if (fs.existsSync(DOWNLOAD_DIR)) {
+    try {
+      const files = fs.readdirSync(DOWNLOAD_DIR);
+      const cleanName = filename.split(/[?#]/)[0];
+      const nameWithoutExt = cleanName.replace(/\.[^/.]+$/, "");
+
+      const matched = files.find(f => 
+        f === cleanName || 
+        f.startsWith(nameWithoutExt) || 
+        cleanName.startsWith(f.replace(/\.[^/.]+$/, ""))
+      );
+
+      if (matched) {
+        const matchedPath = path.join(DOWNLOAD_DIR, matched);
+        res.setHeader("Content-Disposition", `attachment; filename="${matched}"`);
+        return res.sendFile(matchedPath);
+      }
+    } catch (_) {}
+  }
+
+  res.status(404).json({ success: false, message: "File not found on server" });
 };
 
 export const openStorageFolder = (req, res) => {
