@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import axios from "axios";
+import ytdl from "@distube/ytdl-core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -394,6 +395,56 @@ export const getVideoInfo = async (url) => {
   const match = url.match(regExp);
   const videoId = (match && match[2].length === 11) ? match[2] : null;
 
+  // 1. Try @distube/ytdl-core native JS engine
+  try {
+    const info = await ytdl.getInfo(url);
+    const details = info.videoDetails;
+    const formats = [];
+    const seen = new Set();
+
+    if (info.formats) {
+      for (const fmt of info.formats) {
+        if (fmt.height && (fmt.hasVideo || fmt.qualityLabel)) {
+          const label = `${fmt.height}p`;
+          if (!seen.has(label)) {
+            seen.add(label);
+            formats.push({
+              formatId: fmt.format_id || label,
+              label,
+              height: fmt.height,
+              filesize: parseInt(fmt.contentLength) || 0,
+              ext: fmt.container || "mp4",
+            });
+          }
+        }
+      }
+    }
+
+    const combinedFormats = info.formats
+      ? info.formats.filter(f => f.hasVideo && f.hasAudio && f.url)
+      : [];
+    const bestCombined = combinedFormats.length > 0
+      ? combinedFormats.reduce((prev, curr) => ((curr.height || 0) > (prev.height || 0) ? curr : prev))
+      : (info.formats ? info.formats.find(f => f.url) : null);
+    const streamUrl = bestCombined ? bestCombined.url : "";
+
+    console.log("[getVideoInfo] Extracted video info via @distube/ytdl-core JS engine!");
+    return {
+      videoId: details.videoId || videoId || "",
+      title: details.title || "YouTube Video",
+      thumbnail: details.thumbnails?.at(-1)?.url || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ""),
+      channel: details.author?.name || "",
+      duration: parseInt(details.lengthSeconds) || 0,
+      viewCount: parseInt(details.viewCount) || 0,
+      url: details.video_url || url,
+      formats: formats.length > 0 ? formats.sort((a, b) => a.height - b.height) : DEFAULT_FORMATS,
+      streamUrl,
+    };
+  } catch (ytdlErr) {
+    console.warn(`[getVideoInfo] ytdl-core notice: ${ytdlErr.message}. Trying yt-dlp...`);
+  }
+
+  // 2. Try yt-dlp binary fallback
   try {
     const { stdout } = await execYtDlp(
       `--dump-json --no-check-certificate --no-playlist --socket-timeout 30 --user-agent "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36" --extractor-args "youtube:player-client=ios,tv_embedded,mweb" "${url}"`
@@ -445,7 +496,7 @@ export const getVideoInfo = async (url) => {
       streamUrl,
     };
   } catch (err) {
-    console.warn(`[getVideoInfo] yt-dlp metadata notice: ${err.message}. Using YouTube oEmbed fallback...`);
+    console.warn(`[getVideoInfo] Using YouTube oEmbed fallback...`);
     let title = "YouTube Video";
     let channel = "";
     let thumbnail = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "";
