@@ -62,22 +62,88 @@ export const getStreamUrl = async (req, res) => {
   const fallbackUrl = `${protocol}://${host}/api/video/file/video_${resolution}p.mp4?url=${encodedUrl}&res=${resolution}`;
 
   try {
+    // 1. Try yt-dlp based extraction first
     let result = null;
     try {
       result = await ytGetStreamUrl(url, resolution);
     } catch (_) {}
 
-    const finalStreamUrl = (result && result.streamUrl) ? result.streamUrl : fallbackUrl;
+    if (result && result.streamUrl) {
+      return res.json({
+        success: true,
+        data: {
+          streamUrl: result.streamUrl,
+          title: result.title || "",
+          thumbnail: result.thumbnail || "",
+          channel: result.channel || "",
+          duration: result.duration || 0,
+          videoId: result.videoId || "",
+        },
+      });
+    }
 
+    // 2. Try Piped API directly (fast, no yt-dlp needed)
+    const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/i);
+    const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+    if (videoId) {
+      const pipedInstances = [
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.mha.fi",
+        "https://api.piped.privacydev.net",
+      ];
+      const targetHeight = parseInt(resolution) || 720;
+
+      for (const inst of pipedInstances) {
+        try {
+          const pipedRes = await axios.get(`${inst}/streams/${videoId}`, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+            timeout: 6000,
+          });
+          const data = pipedRes.data;
+          if (data && data.videoStreams && data.videoStreams.length > 0) {
+            // Prefer combined audio+video streams
+            let streams = data.videoStreams.filter(s => s.videoOnly === false && s.url);
+            if (streams.length === 0) streams = data.videoStreams.filter(s => s.url);
+
+            if (streams.length > 0) {
+              let selected = streams.find(s => s.height === targetHeight);
+              if (!selected) {
+                const sorted = streams.sort((a, b) => (b.height || 0) - (a.height || 0));
+                selected = sorted.find(s => (s.height || 0) <= targetHeight) || sorted[0];
+              }
+              if (selected && selected.url) {
+                console.log(`[getStreamUrl] Got stream from Piped (${inst})`);
+                return res.json({
+                  success: true,
+                  data: {
+                    streamUrl: selected.url,
+                    title: data.title || "",
+                    thumbnail: data.thumbnailUrl || "",
+                    channel: data.uploader || "",
+                    duration: data.duration || 0,
+                    videoId: videoId,
+                  },
+                });
+              }
+            }
+          }
+        } catch (pipedErr) {
+          console.warn(`[getStreamUrl] Piped ${inst} failed:`, pipedErr.message);
+        }
+      }
+    }
+
+    // 3. Final fallback — return server proxy URL
     res.json({
       success: true,
       data: {
-        streamUrl: finalStreamUrl,
-        title: result?.title || "",
-        thumbnail: result?.thumbnail || "",
-        channel: result?.channel || "",
-        duration: result?.duration || 0,
-        videoId: result?.videoId || "",
+        streamUrl: fallbackUrl,
+        title: "",
+        thumbnail: "",
+        channel: "",
+        duration: 0,
+        videoId: videoId || "",
       },
     });
   } catch (err) {
@@ -655,8 +721,11 @@ export const streamFile = async (req, res) => {
   const filePath = path.join(DOWNLOAD_DIR, filename);
 
   if (fs.existsSync(filePath)) {
+    const stat = fs.statSync(filePath);
     res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Length", stat.size);
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Accept-Ranges", "bytes");
     return res.sendFile(filePath);
   }
 
@@ -688,20 +757,62 @@ export const streamFile = async (req, res) => {
       console.log(`[streamFile] Proxying live video stream for ${videoUrl}...`);
       res.setHeader("Content-Type", "video/mp4");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Accept-Ranges", "bytes");
 
+      // 1. Try Piped API for direct stream URL
       let directUrl = "";
-      try {
-        const streamResult = await ytGetStreamUrl(videoUrl, resolution);
-        if (streamResult && streamResult.streamUrl) {
-          directUrl = streamResult.streamUrl;
+      const videoIdMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/i);
+      const vid = videoIdMatch ? videoIdMatch[1] : null;
+
+      if (vid) {
+        const pipedInstances = [
+          "https://pipedapi.kavin.rocks",
+          "https://pipedapi.mha.fi",
+          "https://api.piped.privacydev.net",
+        ];
+        const targetH = parseInt(resolution) || 720;
+        for (const inst of pipedInstances) {
+          try {
+            const pipedRes = await axios.get(`${inst}/streams/${vid}`, {
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+              timeout: 6000,
+            });
+            if (pipedRes.data && pipedRes.data.videoStreams) {
+              let streams = pipedRes.data.videoStreams.filter(s => s.videoOnly === false && s.url);
+              if (streams.length === 0) streams = pipedRes.data.videoStreams.filter(s => s.url);
+              if (streams.length > 0) {
+                let sel = streams.find(s => s.height === targetH);
+                if (!sel) {
+                  const sorted = streams.sort((a, b) => (b.height || 0) - (a.height || 0));
+                  sel = sorted.find(s => (s.height || 0) <= targetH) || sorted[0];
+                }
+                if (sel && sel.url) {
+                  directUrl = sel.url;
+                  console.log(`[streamFile] Got Piped stream from ${inst}`);
+                  break;
+                }
+              }
+            }
+          } catch (_) {}
         }
-      } catch (_) {}
+      }
+
+      // 2. Try yt-dlp stream URL extraction
+      if (!directUrl) {
+        try {
+          const streamResult = await ytGetStreamUrl(videoUrl, resolution);
+          if (streamResult && streamResult.streamUrl) {
+            directUrl = streamResult.streamUrl;
+          }
+        } catch (_) {}
+      }
 
       if (directUrl) {
         const streamResponse = await axios({
           method: "get",
           url: directUrl,
           responseType: "stream",
+          timeout: 30000,
           headers: {
             "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
           }
@@ -712,7 +823,7 @@ export const streamFile = async (req, res) => {
         return streamResponse.data.pipe(res);
       }
 
-      // If directUrl unavailable, pipe yt-dlp stdout directly into res
+      // 3. Pipe yt-dlp stdout directly into res
       console.log(`[streamFile] Spawning yt-dlp stdout stream for ${videoUrl}...`);
       const proc = spawnYtDlp([
         videoUrl,
@@ -726,6 +837,9 @@ export const streamFile = async (req, res) => {
 
       proc.on("error", (e) => {
         console.error("[streamFile] yt-dlp spawn error:", e.message);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, message: "Video stream failed" });
+        }
       });
       return;
     } catch (err) {
@@ -733,7 +847,7 @@ export const streamFile = async (req, res) => {
     }
   }
 
-  res.status(404).json({ success: false, message: "File not found on server" });
+  res.status(404).json({ success: false, message: "File not found. Try a different resolution or video." });
 };
 
 export const openStorageFolder = (req, res) => {
